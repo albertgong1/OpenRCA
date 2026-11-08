@@ -25,6 +25,44 @@ def _load_config() -> Dict[str, Any]:
 
 configs = _load_config()
 
+# Anthropic models need explicit cache breakpoints; OpenAI-compatible gateways
+# such as DigitalOcean Gradient pass `cache_control` through on content blocks.
+_CACHE_BREAKPOINTS = 2
+
+
+def _supports_prompt_cache(model: str) -> bool:
+    return "anthropic" in model.lower() or "claude" in model.lower()
+
+
+def _with_cache_breakpoints(messages):
+    """Return a copy of `messages` with cache breakpoints on the last two messages.
+
+    The agent resends its whole history on every call, and both the controller and
+    the executor append a temporary `note` message that is not kept in the history.
+    Marking only the last message would cache a prefix ending in that note, which
+    the next call never repeats. The second-to-last breakpoint caches the history
+    itself, which the next call does start with.
+
+    The input is copied, never mutated: callers reuse and extend these lists, and
+    accumulated markers would exceed Anthropic's limit of 4 breakpoints per request.
+    """
+    marked = list(messages)
+    for i in range(max(0, len(marked) - _CACHE_BREAKPOINTS), len(marked)):
+        message = marked[i]
+        content = message.get("content")
+        if isinstance(content, str):
+            if not content:
+                continue  # empty text blocks are rejected
+            blocks = [{"type": "text", "text": content}]
+        elif isinstance(content, list) and content and isinstance(content[-1], dict):
+            blocks = [dict(block) for block in content]
+        else:
+            continue
+        blocks[-1]["cache_control"] = {"type": "ephemeral"}
+        marked[i] = {**message, "content": blocks}
+    return marked
+
+
 def get_chat_completion(messages, temperature: Optional[float] = None, tools=None, parallel_tool_calls: bool = False):
     from openai import OpenAI
 
@@ -35,6 +73,9 @@ def get_chat_completion(messages, temperature: Optional[float] = None, tools=Non
     if configs["API_BASE"]:
         client_args["base_url"] = configs["API_BASE"]
     client = OpenAI(**client_args)
+
+    if _supports_prompt_cache(configs["MODEL"]):
+        messages = _with_cache_breakpoints(messages)
 
     request_args: Dict[str, Any] = {
         "model": configs["MODEL"],
