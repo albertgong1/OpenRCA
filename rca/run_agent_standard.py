@@ -77,7 +77,7 @@ def main(args, uid, dataset):
         
         instruction = row["instruction"]
         task_index = row["task_index"]
-        scoring_points = row["scoring_points"]
+        scoring_points = row["scoring_points"] if "scoring_points" in row else ""
         task_id = int(task_index.split('_')[1])
         best_score = 0
 
@@ -135,27 +135,41 @@ def main(args, uid, dataset):
                 eval_df.to_csv(eval_file, 
                                index=False)
 
-                passed_criteria, failed_criteria, score = evaluate(prediction, scoring_points)
-                
-                logger.info(f"Prediction: {prediction}")
-                logger.info(f"Scoring Points: {scoring_points}")
-                logger.info(f"Passed Criteria: {passed_criteria}")
-                logger.info(f"Failed Criteria: {failed_criteria}")
-                logger.info(f"Score: {score}")
-                best_score = max(best_score, score)
+                if args.no_score:
+                    # Scoring happens out of band (e.g. against a different
+                    # judge), so skip evaluate() entirely. The row written just
+                    # above already holds the prediction, with passed/failed/
+                    # score left as "N/A" for the external scorer to fill in.
+                    # This also means query.csv needs no scoring_points column:
+                    # a rubric that matches none of evaluate()'s three patterns
+                    # gives it a zero denominator and a ZeroDivisionError, which
+                    # only TimeoutError is caught here, so it would kill the run.
+                    logger.info(f"Prediction: {prediction}")
+                    logger.info("Scoring skipped (--no-score)")
+                    temp_scores = scores.copy()
+                    temp_nums = nums.copy()
+                else:
+                    passed_criteria, failed_criteria, score = evaluate(prediction, scoring_points)
 
-                eval_df.loc[eval_df.index[-1], "passed"] = '\n'.join(passed_criteria)
-                eval_df.loc[eval_df.index[-1], "failed"] = '\n'.join(failed_criteria)
-                eval_df.loc[eval_df.index[-1], "score"] = score
-                eval_df.to_csv(eval_file, 
-                               index=False)
-                
-                temp_scores = scores.copy()
-                temp_scores[catalog] += best_score
-                temp_scores["total"] += best_score
-                temp_nums = nums.copy()
-                temp_nums[catalog] += 1
-                temp_nums["total"] += 1
+                    logger.info(f"Prediction: {prediction}")
+                    logger.info(f"Scoring Points: {scoring_points}")
+                    logger.info(f"Passed Criteria: {passed_criteria}")
+                    logger.info(f"Failed Criteria: {failed_criteria}")
+                    logger.info(f"Score: {score}")
+                    best_score = max(best_score, score)
+
+                    eval_df.loc[eval_df.index[-1], "passed"] = '\n'.join(passed_criteria)
+                    eval_df.loc[eval_df.index[-1], "failed"] = '\n'.join(failed_criteria)
+                    eval_df.loc[eval_df.index[-1], "score"] = score
+                    eval_df.to_csv(eval_file, 
+                                   index=False)
+
+                    temp_scores = scores.copy()
+                    temp_scores[catalog] += best_score
+                    temp_scores["total"] += best_score
+                    temp_nums = nums.copy()
+                    temp_nums[catalog] += 1
+                    temp_nums["total"] += 1
 
             except TimeoutError:
                 logger.error(f"Loop {i} exceeded the time limit and was skipped")
@@ -178,6 +192,9 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--tag", type=str, default='rca')
     parser.add_argument("--auto", type=bool, default=False)
+    parser.add_argument("--no-score", action="store_true",
+                        help="Run the agent and save predictions without scoring them. "
+                             "Use when predictions are scored out of band by another judge.")
 
     args = parser.parse_args()
 
