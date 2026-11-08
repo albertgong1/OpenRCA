@@ -1,4 +1,5 @@
 import os
+import importlib
 import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
@@ -253,12 +254,25 @@ def extract_period_data(df_list:list, data_type:str, target_timestamp:int, sampl
 
 def main(args):
     import rca.baseline.rca_agent.prompt.agent_prompt as ap
-    if args.dataset == "Telecom":
-        import rca.baseline.rca_agent.prompt.basic_prompt_Telecom as bp
-    elif args.dataset == "Bank":
-        import rca.baseline.rca_agent.prompt.basic_prompt_Bank as bp
-    elif args.dataset == "Market/cloudbed-1" or args.dataset == "Market/cloudbed-2":
-        import rca.baseline.rca_agent.prompt.basic_prompt_Market as bp
+    _PROMPT_MODULES = {
+        "Telecom": "basic_prompt_Telecom",
+        "Bank": "basic_prompt_Bank",
+        "Market/cloudbed-1": "basic_prompt_Market",
+        "Market/cloudbed-2": "basic_prompt_Market",
+        "OtelDemo": "basic_prompt_OtelDemo",
+    }
+    if args.dataset not in _PROMPT_MODULES:
+        # The if/elif this replaces had no else, so an unknown dataset left bp
+        # unbound and failed later with an opaque NameError.
+        raise ValueError(
+            f"No basic prompt for dataset {args.dataset!r}. "
+            f"Known datasets: {', '.join(sorted(_PROMPT_MODULES))}. "
+            "Add rca/baseline/rca_agent/prompt/basic_prompt_<name>.py "
+            "and register it in _PROMPT_MODULES."
+        )
+    bp = importlib.import_module(
+        f"rca.baseline.rca_agent.prompt.{_PROMPT_MODULES[args.dataset]}"
+    )
 
     inst_file = f"dataset/{args.dataset}/query.csv"
     gt_file = f"dataset/{args.dataset}/record.csv"

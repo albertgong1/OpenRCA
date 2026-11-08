@@ -1,4 +1,5 @@
 import os
+import importlib
 import sys
 import json
 import argparse
@@ -20,12 +21,25 @@ def main(args, uid, dataset):
 
     from rca.baseline.rca_agent.rca_agent import RCA_Agent
     import rca.baseline.rca_agent.prompt.agent_prompt as ap
-    if dataset == "Telecom":
-        import rca.baseline.rca_agent.prompt.basic_prompt_Telecom as bp
-    elif dataset == "Bank":
-        import rca.baseline.rca_agent.prompt.basic_prompt_Bank as bp
-    elif dataset == "Market/cloudbed-1" or dataset == "Market/cloudbed-2":
-        import rca.baseline.rca_agent.prompt.basic_prompt_Market as bp
+    _PROMPT_MODULES = {
+        "Telecom": "basic_prompt_Telecom",
+        "Bank": "basic_prompt_Bank",
+        "Market/cloudbed-1": "basic_prompt_Market",
+        "Market/cloudbed-2": "basic_prompt_Market",
+        "OtelDemo": "basic_prompt_OtelDemo",
+    }
+    if dataset not in _PROMPT_MODULES:
+        # The if/elif this replaces had no else, so an unknown dataset left bp
+        # unbound and failed later with an opaque NameError.
+        raise ValueError(
+            f"No basic prompt for dataset {dataset!r}. "
+            f"Known datasets: {', '.join(sorted(_PROMPT_MODULES))}. "
+            "Add rca/baseline/rca_agent/prompt/basic_prompt_<name>.py "
+            "and register it in _PROMPT_MODULES."
+        )
+    bp = importlib.import_module(
+        f"rca.baseline.rca_agent.prompt.{_PROMPT_MODULES[dataset]}"
+    )
 
     inst_file = f"dataset/{dataset}/query.csv"
     gt_file = f"dataset/{dataset}/record.csv"
