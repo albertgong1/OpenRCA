@@ -30,6 +30,14 @@ class FakeAgent:
     def run(self, instruction, logger, max_step, max_turn):
         if "timeout" in instruction:
             time.sleep(5)
+        if "swallow" in instruction:
+            # Mimics the OpenAI SDK, which retries any Exception raised during a
+            # request: a TimeoutError alarm would be absorbed here.
+            for _ in range(3):
+                try:
+                    time.sleep(5)
+                except Exception:
+                    continue
         if "boom" in instruction:
             raise RuntimeError("agent exploded")
         return (f"pred for {instruction}",
@@ -118,6 +126,15 @@ class RunnerTest(unittest.TestCase):
         logs = Path("test/monitor/Bank/agent-t-fake-model/uid/history")
         self.assertIn("exceeded the time limit", (logs / "uid_#1-0.log").read_text())
         self.assertIn("agent exploded", (logs / "uid_#2-0.log").read_text())
+
+    def test_timeout_is_not_swallowed_by_retrying_code(self):
+        pd.DataFrame({"task_index": ["task_1"], "instruction": ["swallow zero"],
+                      "scoring_points": ["sp"]}).to_csv("dataset/Bank/query.csv", index=False)
+        started = time.monotonic()
+        runner.main(self.args(), "uid", "Bank")
+        self.assertLess(time.monotonic() - started, 4, "the alarm was absorbed by an except Exception")
+        self.assertFalse(self.eval_file().exists())
+        self.assertEqual(signal.alarm(0), 0)
 
     def test_parallel_results_written_in_query_order(self):
         with mock.patch.object(runner, "ProcessPoolExecutor", SyncExecutor), \

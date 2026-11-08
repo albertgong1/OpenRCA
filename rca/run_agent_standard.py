@@ -35,8 +35,21 @@ _STDOUT_FORMAT = (
 _EVAL_COLUMNS = ["row_id", "task_index", "instruction", "prediction", "groundtruth", "passed", "failed", "score"]
 
 
+class SampleTimeout(BaseException):
+    """Raised from SIGALRM when a sample exceeds --timeout.
+
+    Deliberately not a TimeoutError (or any Exception). On Python >= 3.10
+    TimeoutError is socket.timeout, so an alarm landing during a model API call,
+    where a sample spends most of its time, was mapped by httpcore to
+    httpx.ReadTimeout and silently retried by the OpenAI SDK; the one-shot alarm
+    was then gone and the sample ran with no limit. A BaseException is not
+    retried by the SDK and passes through the agent's `except Exception`
+    handlers; the sandbox still closes its container on the way out.
+    """
+
+
 def handler(signum, frame):
-    raise TimeoutError("Loop execution exceeded the time limit")
+    raise SampleTimeout("Loop execution exceeded the time limit")
 
 
 def _load_basic_prompt(dataset):
@@ -120,7 +133,7 @@ def run_sample(args, uid, dataset, job):
                 # Previously the alarm stayed armed if agent.run raised, so it
                 # could fire later inside an unrelated query.
                 signal.alarm(0)
-        except TimeoutError:
+        except SampleTimeout:
             log.error(f"Loop {i} exceeded the time limit and was skipped")
             return None, "timeout"
         except Exception as e:
