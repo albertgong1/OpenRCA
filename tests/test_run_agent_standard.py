@@ -183,5 +183,17 @@ class RunnerTest(unittest.TestCase):
                          ["easy", "middle", "hard", "other", "other"])
 
 
+class RouterRetryTest(unittest.TestCase):
+    def test_sdk_retries_configured_and_errors_propagate(self):
+        client = mock.MagicMock()
+        client.chat.completions.create.side_effect = RuntimeError("still failing after SDK retries")
+        with mock.patch("openai.OpenAI", return_value=client) as openai_cls:
+            with self.assertRaises(RuntimeError):
+                router.get_chat_completion([{"role": "user", "content": "hi"}])
+        self.assertEqual(openai_cls.call_args.kwargs["max_retries"], router._DEFAULT_MAX_RETRIES)
+        # One call: no extra retry loop on top of the SDK's.
+        self.assertEqual(client.chat.completions.create.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,10 +1,13 @@
 import json
 import os
-import time
 from typing import Any, Dict, Optional
 
 _DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.json")
 _MODEL_KEY = "gemini3pro"
+# Retries are done by the OpenAI SDK: exponential backoff with jitter (0.5 s
+# doubling to 8 s), honouring Retry-After, on connection errors, timeouts, 408,
+# 409, 429 and 5xx. Its default of 2 is too few for many parallel workers.
+_DEFAULT_MAX_RETRIES = 8
 
 def _load_config() -> Dict[str, Any]:
     config_path = os.environ.get("API_CONFIG_PATH") or _DEFAULT_CONFIG_PATH
@@ -21,6 +24,7 @@ def _load_config() -> Dict[str, Any]:
         "API_KEY": model_config.get("api_key"),
         "API_BASE": model_config.get("base_url"),
         "TEMPERATURE": model_config.get("temperature", 0.0),
+        "MAX_RETRIES": int(model_config.get("max_retries", _DEFAULT_MAX_RETRIES)),
     }
 
 configs = _load_config()
@@ -69,7 +73,7 @@ def get_chat_completion(messages, temperature: Optional[float] = None, tools=Non
     if temperature is None:
         temperature = configs["TEMPERATURE"]
 
-    client_args = {"api_key": configs["API_KEY"]}
+    client_args = {"api_key": configs["API_KEY"], "max_retries": configs["MAX_RETRIES"]}
     if configs["API_BASE"]:
         client_args["base_url"] = configs["API_BASE"]
     client = OpenAI(**client_args)
@@ -86,16 +90,11 @@ def get_chat_completion(messages, temperature: Optional[float] = None, tools=Non
         request_args["tools"] = tools
         request_args["parallel_tool_calls"] = parallel_tool_calls
 
-    for _ in range(3):
-        try:
-            return client.chat.completions.create(**request_args).choices[0].message.content
-        except Exception as e:
-            print(e)
-            if "429" in str(e):
-                print("Rate limit exceeded. Waiting for 1 second.")
-                time.sleep(1)
-                continue
-            raise e
+    # The previous loop here retried only on "429" with a fixed 1 s sleep, on top
+    # of the SDK's own retries, and after its third attempt fell through and
+    # returned None, which callers then failed on with an unrelated TypeError.
+    # Errors that survive the SDK's retries now propagate.
+    return client.chat.completions.create(**request_args).choices[0].message.content
 
 if __name__ == "__main__":
     print(f"Model: {configs['MODEL']}")
