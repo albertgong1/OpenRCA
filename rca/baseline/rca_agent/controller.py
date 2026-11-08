@@ -119,7 +119,10 @@ def _control_loop(objective, plan, ap, bp, logger, max_step, max_turn, kernel):
 
             code, result, status, new_history = execute_act(instruction, bp.schema, history, attempt_actor, kernel, logger)
             if not status:
-                logger.warn(f'Self-Correction failed.')
+                # loguru has no .warn(); the AttributeError used to be caught by
+                # the generic handler below, which told the model "'Logger' object
+                # has no attribute 'warn'" instead of the executor's failure.
+                logger.warning(f'Self-Correction failed.')
                 observation = "The Executor failed to execute the instruction. Please provide a new instruction."
             observation = f"{result}"
             history = new_history

@@ -41,12 +41,23 @@ class ExecutorTests(unittest.TestCase):
     def test_accepts_python_block_and_crlf(self):
         self.assertEqual(executor.extract_python(" \n```python\r\nx = 1\r\n```\n"), "x = 1")
 
+    def test_accepts_one_python_block_surrounded_by_prose(self):
+        # Prose is ignored, never executed: only the fenced code is returned.
+        for response, code in (
+            ("Here is code:\n```python\n1\n```", "1"),
+            ("```python\n1\n```\nextra instructions", "1"),
+            ("The column is `kpi_name`. Fixed:\n\n```python\nx = 1\nx\n```\n\nThis prints 1.", "x = 1\nx"),
+            ("Output will look like:\n```\n42\n```\n```python\nprint(42)\n```", "print(42)"),
+        ):
+            with self.subTest(response=response[:80]):
+                self.assertEqual(executor.extract_python(response), code)
+
     def test_rejects_bare_prose_multiple_blocks_and_ipython_escapes(self):
         for response in (
             "__import__('os').system('echo unsafe')",
-            "Here is code:\n```python\n1\n```",
-            "```python\n1\n```\nextra instructions",
+            "I would run the following: import os; os.listdir('.')",
             "```python\n1\n```\n```python\n2\n```",
+            "First:\n```python\n1\n```\nthen:\n```python\n2\n```\ndone",
             "```python\n!echo unsafe\n```",
             "```python\n%run /tmp/payload.py\n```",
             "```python\n\n```",
@@ -107,6 +118,52 @@ class ExecutorTests(unittest.TestCase):
         result = self.execute(["```python\n1/0\n```", "```python\n1+1\n```", "2"])
         self.assertTrue(result[2])
         self.assertEqual(self.kernel.run_cell.call_count, 2)
+
+    def test_every_attempt_includes_the_format_note(self):
+        self.kernel.run_cell.side_effect = [
+            sandbox.ExecutionResult(False, error="KeyError: 'kpi'"),
+            sandbox.ExecutionResult(True, "2"),
+        ]
+        with mock.patch.object(executor, "get_chat_completion",
+                               side_effect=["```python\n1/0\n```", "```python\n1+1\n```", "2"]) as api:
+            result = executor.execute_act("Analyze CSV", "schema", [], [], self.kernel, self.logger)
+        self.assertTrue(result[2])
+        code_calls = api.call_args_list[:2]
+        for call in code_calls:
+            last = call.kwargs["messages"][-1]
+            self.assertIn("Response format:", last["content"])
+        # The retry still carries the error that needs fixing.
+        self.assertIn("KeyError: 'kpi'", code_calls[1].kwargs["messages"][-2]["content"])
+
+    def test_prose_wrapped_retry_after_python_error_recovers(self):
+        # Previously the second reply below was rejected for its prose, which used
+        # up the last attempt and failed the step.
+        self.kernel.run_cell.side_effect = [
+            sandbox.ExecutionResult(False, error="ZeroDivisionError"),
+            sandbox.ExecutionResult(True, "2"),
+        ]
+        result = self.execute(["```python\n1/0\n```",
+                               "The error comes from dividing by zero. Fixed:\n```python\n1+1\n```",
+                               "2"])
+        self.assertTrue(result[2])
+        self.assertEqual(self.kernel.run_cell.call_args_list[1].args, ("1+1",))
+
+    def test_controller_reports_executor_failure_with_real_logger(self):
+        # A Mock logger accepts .warn(), which hid that loguru has no such method.
+        from loguru import logger as real_logger
+        ap, bp = mock.Mock(rules="rules"), mock.Mock(schema="schema", cand="candidates")
+        pending = json.dumps({"analysis": "start", "instruction": "analyze", "completed": "False"})
+        done = json.dumps({"analysis": "done", "instruction": "none", "completed": "True"})
+        self.kernel.run_cell.return_value = sandbox.ExecutionResult(False, error="ZeroDivisionError")
+        with mock.patch.object(controller, "get_chat_completion", side_effect=[pending, done, "final"]) as admin_api, \
+                mock.patch.object(executor, "get_chat_completion", return_value="```python\n1/0\n```"):
+            answer, trajectory, _ = controller._control_loop("q", "", ap, bp, real_logger, 5, 3, self.kernel)
+        self.assertEqual(answer, "final")
+        self.assertEqual(len(trajectory), 1)
+        # The controller appends its own "Continue your reasoning" note last.
+        observation = admin_api.call_args_list[1].kwargs["messages"][-2]["content"]
+        self.assertIn("The Executor failed to complete the instruction", observation)
+        self.assertNotIn("has no attribute", observation)
 
     def test_controller_stops_after_fatal_sandbox_error(self):
         ap, bp = mock.Mock(rules="rules"), mock.Mock(schema="schema", cand="candidates")

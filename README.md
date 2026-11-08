@@ -136,8 +136,9 @@ the cell deadline; timeout, protocol or freezer failures destroy the sandbox
 and terminate the diagnosis without further model retries. Ordinary Python
 errors can still be corrected in the same stateful sandbox.
 
-The executor accepts exactly one fenced Python block and rejects bare responses,
-mixed prose, invalid Python and IPython shell/magic syntax. This validation is
+The executor accepts a response containing exactly one fenced Python block
+(surrounding prose is ignored and never executed) and rejects bare responses,
+multiple Python blocks, invalid Python and IPython shell/magic syntax. This validation is
 not a Python security boundary: all accepted code still runs in the container.
 If Docker or the image is unavailable, execution fails closed. There is no
 host execution mode. `OPENRCA_SANDBOX_IMAGE` can select an operator-built trusted

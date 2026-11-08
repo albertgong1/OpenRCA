@@ -48,18 +48,28 @@ rule = """## RULES OF PYTHON CODE WRITING:
 10. Use the timezone stated in the domain knowledge above for all analysis steps. The local machine's default timezone is unknown, so always set the timezone explicitly, e.g. `pytz.timezone('Asia/Shanghai')` or `pytz.utc`, rather than relying on the default.
 """
 
+_PYTHON_FENCE = re.compile(r"```python[ \t]*\r?\n(.*?)\r?\n```", re.DOTALL)
+
+
 def extract_python(response: str) -> str:
-    """Accept one complete Python fence, never arbitrary prose or IPython syntax.
+    """Accept exactly one complete Python fence; never bare code or IPython syntax.
+
+    Prose around the single fence is ignored, as it was before the sandbox was
+    introduced (the original executor took the first ```python block anywhere in
+    the reply). Rejecting it made a chatty but otherwise valid reply cost one of
+    the executor's two attempts per step. Prose is never executed, so this does
+    not widen what can run: only the fenced code reaches the container.
 
     This is input validation, not a security sandbox; valid Python still needs
     the isolated container even when it looks like ordinary pandas code.
     """
     if not isinstance(response, str) or len(response.encode("utf-8")) > MAX_CODE_BYTES:
         raise ValueError("Expected a Python code block within the size limit")
-    match = re.fullmatch(r"\s*```python[ \t]*\r?\n(.*?)\r?\n```\s*", response, re.DOTALL)
-    if match is None or not match.group(1).strip():
+    blocks = _PYTHON_FENCE.findall(response)
+    if len(blocks) != 1 or not blocks[0].strip():
+        # Several blocks are rejected rather than guessed between or concatenated.
         raise ValueError("Expected exactly one fenced Python code block")
-    code = match.group(1).strip()
+    code = blocks[0].strip()
     tree = ast.parse(code)
     for node in ast.walk(tree):
         modules = []
@@ -87,7 +97,6 @@ def execute_act(instruction:str, background:str, history, attempt, kernel: Sandb
             ]
     code = ""
     result = ""
-    retry_flag = False
     status = False
     history.extend([{'role': 'user', 'content': instruction}])
     prompt = history.copy()
@@ -95,22 +104,20 @@ def execute_act(instruction:str, background:str, history, attempt, kernel: Sandb
     tokenizer = tiktoken.encoding_for_model("gpt-4")
     for i in range(2):
         try:
-            if not retry_flag:
-                response = get_chat_completion(
-                    messages=prompt + note,
-                )
-            else:
-                response = get_chat_completion(
-                    messages=prompt,
-                )
-                retry_flag = False
+            # The format note goes on every attempt, retries included. Retries
+            # used to send only "Execution failed ... Please revise your code",
+            # and without the reminder models (notably Claude) often answered
+            # with prose around the code; with only two attempts per step, one
+            # Python error then failed the whole step.
+            response = get_chat_completion(
+                messages=prompt + note,
+            )
             try:
                 code = extract_python(response)
             except (ValueError, SyntaxError) as error:
                 logger.warning(f"Invalid executor code: {error}")
                 prompt.append({'role': 'assistant', 'content': response})
                 prompt.append({'role': 'user', 'content': f"{error}. Please return one valid Python code block."})
-                retry_flag = True
                 continue
             logger.debug(f"Raw Code:\n{code}")
             exec = kernel.run_cell(code)
@@ -151,7 +158,6 @@ def execute_act(instruction:str, background:str, history, attempt, kernel: Sandb
                 logger.debug(f"Execution finished. Time cost: {t2-t1}")
                 prompt.append({'role': 'assistant', 'content': code})
                 prompt.append({'role': 'user', 'content': f"Execution failed:\n{result}\nPlease revise your code and retry."})
-                retry_flag = True
             
         except (SandboxTerminatedError, TimeoutError):
             raise
