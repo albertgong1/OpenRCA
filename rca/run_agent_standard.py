@@ -23,6 +23,7 @@ _PROMPT_MODULES = {
     "Market/cloudbed-2": "basic_prompt_Market",
     "OtelDemo": "basic_prompt_OtelDemo",
     "OtelDemoSplit": "basic_prompt_OtelDemoSplit",
+    "OtelDemoScoped": "basic_prompt_OtelDemoScoped",
 }
 
 # Default loguru format plus the sample being run, so interleaved output from
@@ -126,10 +127,19 @@ def run_sample(args, uid, dataset, job):
             signal.alarm(args.timeout)
             try:
                 agent = RCA_Agent(ap, bp)
+                # A dataset that scopes telemetry per task names the tree for
+                # this one. Mount it under the dataset's own name so every
+                # task reads the same path and none can tell which tree it
+                # got. Without the column the sandbox mounts everything, as
+                # all the other datasets expect.
+                telemetry_mounts = None
+                if job.get("telemetry_root"):
+                    telemetry_mounts = ((job["telemetry_root"], f"{dataset}/telemetry"),)
                 prediction, trajectory, prompt = agent.run(job["instruction"],
                                                            log,
                                                            max_step=args.controller_max_step,
-                                                           max_turn=args.controller_max_turn)
+                                                           max_turn=args.controller_max_turn,
+                                                           telemetry_mounts=telemetry_mounts)
             finally:
                 # Previously the alarm stayed armed if agent.run raised, so it
                 # could fire later inside an unrelated query.
@@ -255,6 +265,8 @@ def main(args, uid, dataset):
                          "task_index": row["task_index"],
                          "instruction": row["instruction"],
                          "scoring_points": row["scoring_points"] if "scoring_points" in row else "",
+                         "telemetry_root": (row["telemetry_root"]
+                                            if "telemetry_root" in row else None),
                          "groundtruth": groundtruth})
 
     logger.info(f"Using dataset: {dataset}")

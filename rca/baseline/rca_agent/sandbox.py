@@ -20,6 +20,12 @@ import warnings
 DEFAULT_IMAGE = "openrca-executor:local"
 MAX_CODE_BYTES = 64 * 1024
 MAX_REPLY_BYTES = 1024 * 1024
+# OtelDemoScoped holds one telemetry tree per ORCA-bench snapshot, so a task
+# sees only what its snapshot held. A run mounts exactly one of them, chosen
+# per task -- see the telemetry_mounts argument below. Enumerated rather than
+# discovered from the filesystem: the allowlist is the control, so a directory
+# appearing under dataset/ must not become mountable on its own.
+_SCOPED_SNAPSHOTS = 31
 TELEMETRY_PATHS = (
     "Bank/telemetry",
     "Telecom/telemetry",
@@ -27,6 +33,7 @@ TELEMETRY_PATHS = (
     "Market/cloudbed-2/telemetry",
     "OtelDemo/telemetry",
     "OtelDemoSplit/telemetry",
+    *(f"OtelDemoScoped/{i:02d}/telemetry" for i in range(1, _SCOPED_SNAPSHOTS + 1)),
 )
 
 
@@ -53,7 +60,8 @@ class SandboxedKernel:
     never mounted. An unavailable or broken sandbox always fails closed.
     """
 
-    def __init__(self, dataset_root=None, *, image=None, timeout=60, memory="8g"):
+    def __init__(self, dataset_root=None, *, telemetry_mounts=None, image=None,
+                 timeout=60, memory="8g"):
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Sandbox timeout must be finite and positive")
         self.timeout = timeout
@@ -69,6 +77,22 @@ class SandboxedKernel:
                 "sandbox image as documented in README.md; host execution is disabled."
             )
         dataset_root = Path(dataset_root or Path(__file__).resolve().parents[3] / "dataset").resolve()
+        # (source, target) relative paths. Default: every allowlisted directory
+        # at its own name, which is what every dataset but OtelDemoScoped uses.
+        # A caller may pass a subset to expose only one tree, and may mount it
+        # under a different name so the agent reads the same path whichever
+        # tree it was given. Sources are still checked against the allowlist.
+        if telemetry_mounts is None:
+            mounts = tuple((relative, relative) for relative in TELEMETRY_PATHS)
+        else:
+            mounts = tuple((str(src), str(dst)) for src, dst in telemetry_mounts)
+            unknown = sorted({src for src, _ in mounts} - set(TELEMETRY_PATHS))
+            if unknown:
+                raise SandboxError(f"Telemetry source not in the allowlist: {unknown}")
+            for _, dst in mounts:
+                parts = Path(dst).parts
+                if Path(dst).is_absolute() or ".." in parts or not parts:
+                    raise SandboxError(f"Unsafe telemetry mount target: {dst!r}")
         image = image or os.environ.get("OPENRCA_SANDBOX_IMAGE", DEFAULT_IMAGE)
         if not image or image.startswith("-"):
             raise SandboxError("Invalid sandbox image")
@@ -87,18 +111,18 @@ class SandboxedKernel:
             "--env", "OPENBLAS_NUM_THREADS=1", "--env", "OMP_NUM_THREADS=1",
             "--entrypoint", "python",
         ]
-        for relative in TELEMETRY_PATHS:
+        for relative, target in mounts:
             source = dataset_root / relative
             if not source.exists():
                 continue
             source = source.resolve()
             if not source.is_dir() or not source.is_relative_to(dataset_root):
                 raise SandboxError("Telemetry directory must remain inside the dataset root")
-            if any(char in str(source) for char in (",", "\n", "\r")):
+            if any(char in str(source) + target for char in (",", "\n", "\r")):
                 raise SandboxError("Unsupported character in telemetry directory path")
             command.extend([
                 "--mount",
-                f"type=bind,source={source},target=/workspace/dataset/{relative},"
+                f"type=bind,source={source},target=/workspace/dataset/{target},"
                 "readonly,bind-propagation=rprivate,bind-recursive=disabled",
             ])
         command.extend([image, "-I", "-u", "/opt/openrca/worker.py"])

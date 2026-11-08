@@ -6,10 +6,10 @@ class RCA_Agent:
         self.ap = agent_prompt
         self.bp = basic_prompt
 
-    def run(self, instruction, logger, max_step=25, max_turn=5):
+    def run(self, instruction, logger, max_step=25, max_turn=5, telemetry_mounts=None):
             
         logger.info(f"Objective: {instruction}")
-        prediction, trajectory, prompt = control_loop(instruction, "", self.ap, self.bp, logger=logger, max_step=max_step, max_turn=max_turn)
+        prediction, trajectory, prompt = control_loop(instruction, "", self.ap, self.bp, logger=logger, max_step=max_step, max_turn=max_turn, telemetry_mounts=telemetry_mounts)
         logger.info(f"Result: {prediction}")
 
         return prediction, trajectory, prompt
