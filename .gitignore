@@ -4,6 +4,8 @@ dataset/
 test/
 api_config.yaml
 config.json
+# Per-model API configs (contain keys); select one with API_CONFIG_PATH
+configs/
 
 # Mac
 .DS_Store
