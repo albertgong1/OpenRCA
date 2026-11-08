@@ -22,6 +22,7 @@ _PROMPT_MODULES = {
     "Market/cloudbed-1": "basic_prompt_Market",
     "Market/cloudbed-2": "basic_prompt_Market",
     "OtelDemo": "basic_prompt_OtelDemo",
+    "OtelDemoSplit": "basic_prompt_OtelDemoSplit",
 }
 
 # Default loguru format plus the sample being run, so interleaved output from

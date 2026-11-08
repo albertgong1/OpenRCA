@@ -260,6 +260,7 @@ def main(args):
         "Market/cloudbed-1": "basic_prompt_Market",
         "Market/cloudbed-2": "basic_prompt_Market",
         "OtelDemo": "basic_prompt_OtelDemo",
+        "OtelDemoSplit": "basic_prompt_OtelDemoSplit",
     }
     if args.dataset not in _PROMPT_MODULES:
         # The if/elif this replaces had no else, so an unknown dataset left bp

@@ -26,6 +26,7 @@ TELEMETRY_PATHS = (
     "Market/cloudbed-1/telemetry",
     "Market/cloudbed-2/telemetry",
     "OtelDemo/telemetry",
+    "OtelDemoSplit/telemetry",
 )
 
 
