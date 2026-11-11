@@ -24,6 +24,8 @@ def _load_config() -> Dict[str, Any]:
         "API_KEY": model_config.get("api_key"),
         "API_BASE": model_config.get("base_url"),
         "TEMPERATURE": model_config.get("temperature", 0.0),
+        # Optional ("low" | "medium" | "high"); omitted from the request when unset.
+        "REASONING_EFFORT": model_config.get("reasoning_effort"),
         "MAX_RETRIES": int(model_config.get("max_retries", _DEFAULT_MAX_RETRIES)),
     }
 
@@ -86,6 +88,12 @@ def get_chat_completion(messages, temperature: Optional[float] = None, tools=Non
         "messages": messages,
         "temperature": temperature,
     }
+    if configs["REASONING_EFFORT"]:
+        # Sent as a raw body field: openai 1.54 has no reasoning_effort argument
+        # on chat.completions.create. The DigitalOcean gateway maps it to each
+        # provider's reasoning control; Anthropic models then require
+        # temperature 1 (the gateway returns 400 otherwise).
+        request_args["extra_body"] = {"reasoning_effort": configs["REASONING_EFFORT"]}
     if tools:
         request_args["tools"] = tools
         request_args["parallel_tool_calls"] = parallel_tool_calls
